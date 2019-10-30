@@ -1,0 +1,60 @@
+---
+- hosts: nas
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: 'VMWARE | Find VMs on datastores'
+      fl_vmware_datastore_guest_facts:
+        datastore_name: '{{ uat_instance }} {{ inventory_hostname |replace("_", " ") }}'
+      register: vms
+      ignore_errors: true
+      tags: vmware, vms
+
+    - name: 'ANSIBLE | Dynamically add VMs to Ansible inventory'
+      add_host:
+        hostname: '{{ item.hw_name }}'
+        groups: datastore_vmguests
+      with_items: '{{ hostvars | json_query("*.vms.instance") }}'
+      no_log: true
+      tags: vmware, vms
+
+- hosts: datastore_vmguests
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: 'VMWARE | Power off/delete imported VMs'
+      vmware_guest:
+        name: '{{ inventory_hostname }}'
+        name_match: first
+        state: absent
+        force: yes
+      tags: vmware, vms
+
+- hosts: nas
+  connection: local
+  gather_facts: false
+  tasks:
+   - name: 'VMWARE | Unmount NFS Datastores'
+     vmware_host_datastore:
+       datacenter_name: '{{ vmware_datacenter }}'
+       datastore_name: '{{ datastore_name }}'
+       datastore_type: 'nfs'
+       nfs_server: '{{ netapp_lif }}'
+       nfs_path: '/{{ uat_instance }}_{{ netapp_junction_path }}'
+       esxi_hostname: '{{ item }}'
+       state: absent
+     # Generate a list of esxi hostnames to loop over. Uses C/Printf format specifier.
+     loop: "{{ query('sequence', 'start=1 end=20 format=b12uatesxihost%02d') }}"
+     when: '"nas" in group_names'
+     tags: vmware, datastore_unmount
+
+   - name: 'NETAPP | Delete NAS Volumes'
+     na_ontap_volume:
+       hostname: '{{ netapp_hostname }}'
+       username: '{{ netapp_username }}'
+       password: '{{ netapp_password }}'
+       https: True
+       vserver: '{{ netapp_vserver }}'
+       name: '{{ uat_instance }}_{{ inventory_hostname }}'
+       state: absent
+     tags: netapp

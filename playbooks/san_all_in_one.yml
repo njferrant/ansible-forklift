@@ -1,0 +1,83 @@
+---
+
+- name: 'Execute SAN storage tasks'
+  hosts: san
+  gather_facts: no
+  connection: local
+  tasks:
+    - name: 'ANSIBLE | Import SAN storage tasks'
+      import_tasks: common/netapp_tasks.yml
+
+    # The ESXi host storage system needs to perform a rescan to discover
+    # clonsed datastores.
+    - name: 'VMWARE | Rescan Host for New Storage'
+      fl_vmware_host_scanhba:
+        esxi_hostname: '{{ vmware_esxi_host }}'
+      run_once: true
+      tags: vmware
+
+    # Disable automatic rescan of hosts when a datastore is added. This
+    # prevents a rescan storm when adding many datastores at once
+    - name: 'VMWARE | Disable automatic host rescan in vCenter'
+      fl_vmware_vcenter_auto_rescan:
+        state: disabled
+      run_once: true
+
+    # Needs to be refactored to accept a list so resignatures can be done
+    # all at once to save time.
+    - name: 'VMWARE | Resignature, Mount, and Rename Datastores'
+      fl_vmware_import_cloned_datastore:
+        datacenter_name: '{{ vmware_datacenter }}'
+        esxi_hostname: '{{ vmware_esxi_host }}'
+        datastore_name: '{{ uat_instance }} {{ inventory_hostname |replace("_", " ") }}'
+        vmfs_device_name:  '{{ "naa." + lun_map.lun_naa_id }}'
+        folder_name: '{{ uat_instance }}'
+      register: datastore_import
+      tags: vmware
+
+    - name: 'VMWARE | Re-enable automatic host rescan in vCenter'
+      fl_vmware_vcenter_auto_rescan:
+        state: enabled
+      run_once: true
+
+    - name: 'VMWARE | Rescan Cluster for New Storage'
+      fl_vmware_host_scanhba:
+        cluster_name: '{{ vmware_cluster }}'
+        refresh_storage: true
+      run_once: true
+      # Only rescan when a datastore is imported. Ensures idempotance.
+      when: datastore_import.changed
+
+    - pause:
+        seconds: 5
+      run_once: true
+
+    - name: 'VMWARE | Import VMs from Datastore'
+      fl_vmware_register_vms:
+        datacenter: '{{ vmware_datacenter }}'
+        cluster: '{{ vmware_cluster }}'
+        datastore: '{{ datastore_name }}'
+        # Make VM names conform to the U1,U2,etc UAT naming
+        vm_name_prefix: '{{ uat_instance | regex_replace("^UAT(.*)$", "U\1") }}'
+        vm_folder: '/{{ vmware_datacenter }}/vm/{{ uat_instance }} Demo/{{ vmware_folder }}'
+      register: imported_vms
+      tags: vmware, import
+
+    - name: 'VMWARE | Delete VMs Virtual Swap Files from Datastores'
+      fl_vmware_delete_vswap_files:
+        datacenter: '{{ vmware_datacenter }}'
+        datastore: '{{ datastore_name }}'
+      when: imported_vms.changed
+      tags: vmware, vswp
+
+- name: 'Refresh inventory to pick up imported VMs'
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - meta: refresh_inventory
+
+- name: 'Execute VMware guest tasks'
+  import_playbook: common/vmguest_tasks.yml
+
+- name: 'Run normal ansible tasks against imported hosts'
+  import_playbook: common/post_tasks.yml

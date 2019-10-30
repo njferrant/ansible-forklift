@@ -1,0 +1,115 @@
+- hosts: vmguests
+  connection: local
+  gather_facts: false
+  tasks:
+    # use custom lookup plugin to identify vm's prod networks, mapping
+    # changing them to their UAT counterparts.
+    - name: 'VMWARE | Change VM networks'
+      vmware_guest:
+        name: "{{ guest_display_name }}"
+        datacenter: '{{ vmware_datacenter }}'
+        cluster: '{{ vmware_cluster }}'
+        # query the vm in your production vmware environment, get its network, then use
+        # the vmware_network_map variable to determine what UAT network it should go on.
+        # if the prod network is not in the map, it gets assigned to the 'quarentine' network.
+        # this is neccisary in environments that import vm's on distributed virtual switches.
+        networks: "{{ lookup('vmware_guest_networks', inventory_hostname|upper, network_map=vmware_network_map, provider=provider) }}"
+        state: present
+      vars:
+        # 'provider' vars for lookup plugin. should be your production vcenter credentials.
+        provider:
+          host: '{{ vmware_prod_host }}'
+
+    # This is necessary to avoid uuid conflicts between the clones of the same
+    # VM in different UAT environments. If VM is powered on, task returns OK
+    # and doesn't change VM bios.uuid. UUID conflicts can affect RedHat
+    # subscription reporting when using Virtual Datacenter subscriptions.
+    - name: 'VMWARE | Change VM bios.uuid'
+      fl_vmware_guest_change_uuid:
+        name: '{{ guest_display_name }}'
+        name_match: first
+      tags: vmware, sds
+
+    # unfortunately vmware_guest will not change networks if the state is
+    # not set to 'present'. therefore it needs to be a seperate task.
+    - name: 'VMWARE | Power on imported VMs'
+      vmware_guest:
+        name: '{{ guest_display_name }}'
+        name_match: first
+        state: poweredon
+      tags: vmware, sds
+
+    # Add default wait time to module and commit to upstream ansible.
+    # Default timeout is 500sec which is too long IMO.
+    #
+    # Make sure VMware tools is running on each guest. Use previously
+    # gathered facts to populate name and folder info.
+    # Not sure why folder is needed. Seems to be phased out in other modules
+    - name: 'VMWARE | Wait for VMware tools to become available'
+      vmware_guest_tools_wait:
+        name: '{{ guest_display_name }}'
+        name_match: first
+        folder: '{{ guest_folder }}'
+      tags: vmware, sds
+
+# Linux tasks run via vmware-tools
+- hosts: linuxGuest
+  connection: local
+  gather_facts: false
+  tasks:
+    # Cloned guests have identical subscription id's. This will prevent
+    # Red Hat Satellite from mixing up prod/uat hosts.
+    - name: 'VMWARE | Clean up Red Hat subscription data'
+      vmware_vm_shell:
+        vm_id: '{{ guest_display_name }}'
+        vm_id_type: vm_name
+        vm_username: root
+        vm_password: '{{ root_pass }}'
+        vm_shell: '/usr/bin/subscription-manager'
+        vm_shell_args: 'clean'
+      when: '"rhel" in guest_os_id'
+      ignore_errors: true
+      tags: rhs, sds
+
+    - name: 'VMWARE | Remove old MAC and UUID references from interface files'
+      vmware_vm_shell:
+        vm_id: '{{ guest_display_name }}'
+        vm_id_type: vm_name
+        vm_username: root
+        vm_password: '{{ root_pass }}'
+        vm_shell: '/bin/sed'
+        vm_shell_args: -i '/^\(HWADDR\|UUID\)=.*$/d' ifcfg-*
+        vm_shell_cwd: "/etc/sysconfig/network-scripts"
+      tags: network, sds
+
+    - name: 'VMWARE | Remove udev persistent network rules file'
+      vmware_vm_shell:
+        vm_id: '{{ guest_display_name }}'
+        vm_id_type: vm_name
+        vm_username: root
+        vm_password: '{{ root_pass }}'
+        vm_shell: '/bin/rm'
+        vm_shell_args: -rf /etc/udev/rules.d/70-persistent-net.rules
+        vm_shell_cwd: /etc/udev/rules.d
+      tags: network, sds
+
+    # restart vms to re-generate udev file correctly. There are discussions about how to
+    # regenerate the file w/out reboot, but most require multiple commands to be run. worth
+    # looking into if we copy a script into the vm, then execute it:
+    #   https://access.redhat.com/discussions/1240213#comment-949303
+    #   https://access.redhat.com/solutions/112643
+    #   https://unix.stackexchange.com/a/372810
+    - name: 'VMWARE | Restart imported VMs'
+      vmware_guest:
+        name: '{{ guest_display_name }}'
+        name_match: first
+        state: restarted
+        wait_for_ip_address: true
+      tags: vmware, network
+
+    - name: 'VMWARE | Wait for VMware tools to become available'
+      vmware_guest_tools_wait:
+        name: '{{ guest_display_name }}'
+        name_match: first
+        folder: '{{ guest_folder }}'
+      tags: vmware, sds

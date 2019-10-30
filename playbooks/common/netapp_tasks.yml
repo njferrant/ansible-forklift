@@ -1,0 +1,62 @@
+# Used to get the latest non-snapmirrored snapshot of each volume. Used for volume clone.
+- name: 'NETAPP | Gather volume snapshot facts'
+  fl_na_ontap_snapshot_facts:
+    hostname: '{{ netapp_hostname }}'
+    username: '{{ netapp_username }}'
+    password: '{{ netapp_password }}'
+    https: True
+    state: info
+  run_once: true
+  delegate_to: localhost
+  register: facts
+
+- name: 'NETAPP | Set snapshot fact for host'
+  set_fact:
+    latest_snapshot: "{{ facts['ansible_facts']['ontap_snapshot_facts']['%s_seed'| format(inventory_hostname)]['name'] }}"
+
+# If parent_vserver is defined, volume is cloned accross vservers.
+# If above vars are not defined, module will omit entire line.
+- name: 'NETAPP | Clone NetApp Volumes'
+  fl_na_ontap_volume_clone:
+    hostname: '{{ netapp_hostname }}'
+    username: '{{ netapp_username }}'
+    password: '{{ netapp_password }}'
+    https: True
+    vserver: '{{ netapp_vserver }}'
+    volume: '{{ uat_instance }}_{{ inventory_hostname }}'
+    parent_volume: '{{ inventory_hostname }}_seed'
+    parent_snapshot: '{{ latest_snapshot }}'
+    parent_vserver: '{{ parent_vserver | default(omit)}}'
+    state: present
+  tags: netapp, clone
+
+# Register results to variable "{{ lun_map }}" so that later VMware
+# tasks can use the lun wwn
+- name: 'NETAPP | Map LUN to iGroup'
+  na_ontap_lun_map:
+    hostname: '{{ netapp_hostname }}'
+    username: '{{ netapp_username }}'
+    password: '{{ netapp_password }}'
+    https: True
+    vserver: '{{ netapp_vserver }}'
+    path: '/vol/{{ uat_instance }}_{{ inventory_hostname }}/lun1'
+    initiator_group_name: '{{ netapp_igroup }}'
+    state: present
+  register: lun_map
+  when: "'san' in group_names"
+  tags: netapp, map
+
+# When cloning across vservers, the cluster API doesn't support junction_path
+# for volume-clone-create. Therefore, do it all in this seperate task.
+- name: 'NETAPP | Set volume junction path'
+  na_ontap_volume:
+    hostname: '{{ netapp_hostname }}'
+    username: '{{ netapp_username }}'
+    password: '{{ netapp_password }}'
+    https: True
+    vserver: '{{ netapp_vserver }}'
+    name: '{{ uat_instance }}_{{ inventory_hostname }}'
+    junction_path: '{{ netapp_junction_path }}'
+    state: present
+  when: "'nas' in group_names"
+  tags: netapp

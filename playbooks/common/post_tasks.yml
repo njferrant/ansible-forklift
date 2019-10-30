@@ -1,0 +1,11 @@
+- hosts: 'all:!san:!nas'
+  gather_facts: false
+  vars:
+    # proxy ssh connection through a bastion host. example below assumes there is one per lab environment.
+    # ensure that MaxStartups and MaxSessions on the bastion hosts sshd_config is set to the same number
+    # of forks defined in ansible (https://github.com/ansible/ansible/issues/17349)
+    ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q root@vmwuatansible0{{ uat_instance[-1] }}"'
+  tasks:
+    - name: 'Hello World!'
+      shell: 'echo "Hello NetApp Insight2019!"|wall'
+

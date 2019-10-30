@@ -1,0 +1,65 @@
+- hosts: san
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: 'VMWARE | Find VMs on datastores'
+      fl_vmware_datastore_guest_facts:
+        datastore_name: '{{ uat_instance }} {{ inventory_hostname |replace("_", " ") }}'
+      register: vms
+      ignore_errors: true
+      tags: vmware, vms
+
+    - name: 'ANSIBLE | Dynamically add VMs to Ansible inventory'
+      add_host:
+        hostname: '{{ item.hw_name }}'
+        groups: datastore_vmguests
+      with_items: '{{ hostvars | json_query("*.vms.instance") }}'
+      no_log: true
+      tags: vmware, vms
+
+- hosts: datastore_vmguests
+  gather_facts: false
+  connection: local
+  tasks:
+    - name: 'VMWARE | Power off/delete imported VMs'
+      vmware_guest:
+        name: '{{ inventory_hostname }}'
+        name_match: first
+        state: absent
+        force: yes
+      tags: vmware, vms
+
+- hosts: san
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: 'VMWARE | Remove Datastores'
+      vmware_host_datastore:
+        datastore_name: '{{ uat_instance }} {{ inventory_hostname |replace("_", " ") }}'
+        esxi_hostname: '{{ vmware_esxi_host }}'
+        state: absent
+      register: datastore
+      tags: vmware
+
+    - name: 'NETAPP | Unmap LUN to iGroup'
+      na_ontap_lun_map:
+        hostname: '{{ netapp_hostname }}'
+        username: '{{ netapp_username }}'
+        password: '{{ netapp_password }}'
+        https: True
+        vserver: '{{ netapp_vserver }}'
+        path: '/vol/{{ uat_instance }}_{{ inventory_hostname }}/lun1'
+        initiator_group_name: '{{ netapp_igroup }}'
+        state: absent
+      tags: netapp
+
+    - name: 'NETAPP | Delete Datastore Volumes'
+      na_ontap_volume:
+        hostname: '{{ netapp_hostname }}'
+        username: '{{ netapp_username }}'
+        password: '{{ netapp_password }}'
+        https: True
+        vserver: '{{ netapp_vserver }}'
+        name: '{{ uat_instance }}_{{ inventory_hostname }}'
+        state: absent
+      tags: netapp

@@ -1,0 +1,53 @@
+---
+
+- name: 'Execute NAS storage tasks'
+  hosts: nas
+  gather_facts: no
+  connection: local
+  tasks:
+    - name: 'ANSIBLE | Import NAS storage tasks'
+      import_tasks: common/netapp_tasks.yml
+
+    - name: 'VMWARE | Mount NFS Datastores'
+      vmware_host_datastore:
+        datacenter_name: '{{ vmware_datacenter }}'
+        datastore_name: '{{ datastore_name }}'
+        datastore_type: nfs
+        nfs_server: '{{ netapp_lif }}'
+        nfs_path: '{{ netapp_junction_path }}'
+        esxi_hostname: '{{ item }}'
+        state: present
+      # Generate a list of esxi hostnames to loop over. Uses C/Printf format specifier.
+      loop: "{{ query('sequence', 'start=1 end=20 format=b12uatesxihost%02d') }}"
+      when: '"nas" in group_names'
+      tags: vmware
+
+    - name: 'VMWARE | Import VMs from Datastore'
+      fl_vmware_register_vms:
+        datacenter: '{{ vmware_datacenter }}'
+        cluster: '{{ vmware_cluster }}'
+        datastore: '{{ datastore_name }}'
+        # Make VM names conform to the U1,U2,etc UAT naming
+        vm_name_prefix: '{{ uat_instance | regex_replace("^UAT(.*)$", "U\1") }}'
+        vm_folder: '/{{ vmware_datacenter }}/vm/{{ uat_instance }} Demo/{{ vmware_folder }}'
+      register: imported_vms
+      tags: import
+
+    - name: 'VMWARE | Delete VMs Virtual Swap Files from Datastores'
+      fl_vmware_delete_vswap_files:
+        datacenter: '{{ vmware_datacenter }}'
+        datastore: '{{ datastore_name }}'
+      #when: imported_vms.changed
+      tags: vmware, vswp
+
+- name: 'Refresh inventory to pick up imported VMs'
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - meta: refresh_inventory
+
+- name: 'Execute VMware guest tasks'
+  import_playbook: common/vmguest_tasks.yml
+
+- name: 'Run normal ansible tasks against imported hosts'
+  import_playbook: common/post_tasks.yml
