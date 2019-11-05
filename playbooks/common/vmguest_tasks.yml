@@ -15,6 +15,8 @@
         # this is neccisary in environments that import vm's on distributed virtual switches.
         networks: "{{ lookup('vmware_guest_networks', inventory_hostname|upper, network_map=vmware_network_map, provider=provider) }}"
         state: present
+      # poweredOn conditional is necessary to prevent bouncing the network interface of active VMs
+      when: guest_power_state == 'poweredOff'
       vars:
         # 'provider' vars for lookup plugin. should be your production vcenter credentials.
         provider:
