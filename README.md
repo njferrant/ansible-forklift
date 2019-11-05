@@ -40,6 +40,7 @@ Use NetApp, VMware, and Ansible to forklift a production virtual machine environ
 export VMWARE_HOST=vcenter.example.com
 export VMWARE_USER=jdoe
 export VMWARE_PASSWORD=supersecret
+export VMWARE_PORT=443
 export VMWARE_VALIDATE_CERTS=false
 ```
 3. VMWare inventory scripts (as well as Ansible Tower/AWX vCenter credential) use slightly diffirent environment variables. I'm guessing there was a lack of communication. You can just paste the below to re-use the env vars from step 2:
