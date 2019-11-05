@@ -34,27 +34,29 @@
   connection: local
   gather_facts: false
   tasks:
-   - name: 'VMWARE | Unmount NFS Datastores'
-     vmware_host_datastore:
-       datacenter_name: '{{ vmware_datacenter }}'
-       datastore_name: '{{ datastore_name }}'
-       datastore_type: 'nfs'
-       nfs_server: '{{ netapp_lif }}'
-       nfs_path: '/{{ uat_instance }}_{{ netapp_junction_path }}'
-       esxi_hostname: '{{ item }}'
-       state: absent
-     # Generate a list of esxi hostnames to loop over. Uses C/Printf format specifier.
-     loop: "{{ query('sequence', 'start=1 end=20 format=b12uatesxihost%02d') }}"
-     when: '"nas" in group_names'
-     tags: vmware, datastore_unmount
+    - name: 'VMWARE | Unmount NFS Datastores'
+      vmware_host_datastore:
+        datacenter_name: '{{ vmware_datacenter }}'
+        datastore_name: '{{ datastore_name }}'
+        datastore_type: 'nfs'
+        nfs_server: '{{ netapp_lif }}'
+        nfs_path: '/{{ uat_instance }}_{{ netapp_junction_path }}'
+        esxi_hostname: '{{ item }}'
+        state: absent
+      # Generate a list of esxi hostnames to loop over. Uses C/Printf format specifier.
+      # Replace the format section with your esxi naming convention. Example loops over
+      # hosts dc1c1esxihost01.example.com to dc1c1esxihost05.example.com.
+      loop: "{{ query('sequence', 'start=1 end=5 format=dc1c1esxihost%02d.example.com') }}"
+      when: '"nas" in group_names'
+      tags: vmware, datastore_unmount
 
-   - name: 'NETAPP | Delete NAS Volumes'
-     na_ontap_volume:
-       hostname: '{{ netapp_hostname }}'
-       username: '{{ netapp_username }}'
-       password: '{{ netapp_password }}'
-       https: True
-       vserver: '{{ netapp_vserver }}'
-       name: '{{ uat_instance }}_{{ inventory_hostname }}'
-       state: absent
-     tags: netapp
+    - name: 'NETAPP | Delete NAS Volumes'
+      na_ontap_volume:
+        hostname: '{{ netapp_hostname }}'
+        username: '{{ netapp_username }}'
+        password: '{{ netapp_password }}'
+        https: True
+        vserver: '{{ netapp_vserver }}'
+        name: '{{ uat_instance }}_{{ inventory_hostname }}'
+        state: absent
+      tags: netapp

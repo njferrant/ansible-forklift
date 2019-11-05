@@ -18,7 +18,8 @@
         esxi_hostname: '{{ item }}'
         state: present
       # Generate a list of esxi hostnames to loop over. Uses C/Printf format specifier.
-      # Replace the format section with your esxi naming convention.
+      # Replace the format section with your esxi naming convention. Example loops over
+      # hosts dc1c1esxihost01.example.com to dc1c1esxihost05.example.com.
       loop: "{{ query('sequence', 'start=1 end=5 format=dc1c1esxihost%02d.example.com') }}"
       when: '"nas" in group_names'
       tags: vmware
